@@ -1,71 +1,62 @@
-# Architecture: zenkai-dl
+# Architecture: zenkai-dl (Web Edition)
 
 ## 1. Overall System Design
 
-**zenkai-dl** follows a modular "Core + Interface" architecture.
+**zenkai-dl** follows a **Client-Server** architecture powered by a modular core.
 
-*   **zenkai-core**: The engine room. A pure Python library (package) that handles the heavy lifting—extraction, downloading, and processing. It knows *how* to download but doesn't care *who* is asking (CLI, GUI, or another script).
-*   **zenkai-dl**: The commander. A CLI wrapper that parses user arguments, handles configuration, invokes `zenkai-core`, and displays progress bars and logs to the terminal.
+*   **zenkai-core**: The headless logic engine (Python Package). Handles extraction, download, and processing.
+*   **zenkai-web**: The backend server (FastAPI) and frontend UI.
+    *   **API Layer**: REST endpoints to fetch info, start downloads, and stream progress.
+    *   **UI Layer**: A clean, responsive web interface (HTML/CSS/JS) for user interaction.
 
 ### Advantages
-*   **Testability**: Core logic can be tested without mocking stdin/stdout.
-*   **Extensibility**: A future GUI (Step 13) can simply import `zenkai-core` without rewriting logic.
-*   **Maintenance**: Tightly scoped responsibilities.
+*   **Accessibility**: Use from any device on the network (phone, tablet, laptop).
+*   **Concurrency**: FastAPI handles multiple users/downloads efficiently via async.
+*   **Visual Feedback**: Real-time progress bars and status updates via WebSockets/SSE.
 
 ## 2. Data Flow
 
-1.  **Input**: User provides a URL (and optional flags) to the CLI.
-2.  **Extraction**: `zenkai-core` passes the URL to `yt-dlp`.
-    *   *Result*: JSON metadata (title, formats, thumbnails).
-3.  **Selection**:
-    *   The system filters available formats based on user preference (e.g., "best video", "1080p", "audio only").
-    *   User confirms selection (if interactive mode matches).
-4.  **Download**:
-    *   Video stream (e.g., `.mp4` video-only) and Audio stream (e.g., `.m4a` audio-only) are downloaded separately to temporary paths.
-    *   *Reason*: High-quality streams on YouTube often separate audio and video.
-5.  **Processing (Muxing)**:
-    *   `FFmpeg` merges the temp video + temp audio into the final output file (container: MKV/MP4).
-    *   Metadata (tags, thumbnails) is embedded.
-6.  **Cleanup**: Temporary files are removed.
-7.  **Output**: Final file placed in the user's download directory.
+1.  **Request**: User enters URL in Web UI -> sends request to `/api/extract`.
+2.  **Extraction**: `zenkai-core` fetches metadata via `yt-dlp`.
+    *   *Result*: JSON returned to Frontend to display format options.
+3.  **Selection**: User selects video (e.g., 1080p) + audio -> Request to `/api/download`.
+4.  **Download Job**:
+    *   Server spawns a background task.
+    *   `zenkai-core` downloads streams to `temp/`.
+    *   **Progress**: Server pushes updates to UI via Server-Sent Events (SSE) or WebSockets.
+5.  **Processing**:
+    *   `FFmpeg` merges streams.
+6.  **Delivery**:
+    *   File moved to `downloads/`.
+    *   UI shows "Download Complete" with a link to stream or download the file.
 
-## 3. Technology Stack Rationale
+## 3. Technology Stack
 
-### Python
-*   **Why**: Massive ecosystem, excellent string/bytes handling, first-class support for `yt-dlp` (which is written in Python).
+### Backend
+*   **Python 3.10+**
+*   **FastAPI**: For high-performance async API.
+*   **zenkai-core**: Our internal logic library.
+    *   *yt-dlp* (Extraction)
+    *   *FFmpeg* (Processing)
 
-### yt-dlp
-*   **Why**: The "Extraction Engine".
-*   It handles the constant cat-and-mouse game of extraction (decrypting signatures, handling throttles).
-*   We use it as a library, not just a subprocess command, for finer control.
+### Frontend
+*   **HTML5 / CSS3**: Clean, modern UI (likely using Tailwind CSS).
+*   **JavaScript**: For API interaction and DOM updates.
+*   **HTMX** (Optional): For simplified dynamic interactions.
 
-### FFmpeg
-*   **Why**: The "post-processor".
-*   Unrivaled for muxing (merging) streams without re-encoding (stream copy), which is fast and preserves quality.
-*   Handles format conversion if necessary.
-
-## 4. Component Communication
-
-*   **Internal**: Direct Python function calls.
-    *   `zenkai.core.extractor.get_info(url)` -> returns `VideoMetadata` object.
-    *   `zenkai.core.downloader.download(stream_id)` -> yields `Progress` events.
-*   **External (CLI)**:
-    *   The CLI subscribes to events (callbacks) from the Core to update the UI (Tqdm progress bars).
-    *   Config files (YAML/TOML) inject settings into the Core context.
-
-## Diagram (Text)
+## 4. Component Diagram
 
 ```mermaid
-graph TD
-    User[User] -->|CLI Command| Interface[zenkai-dl (CLI)]
-    Interface -->|Config| ConfigLoader[Config System]
-    Interface -->|URL| Extractor[zenkai-core: Extractor]
-    Extractor -->|Uses| YTDLP[yt-dlp Library]
-    YTDLP -->|Metadata| Extractor
-    Extractor -->|List of Formats| Interface
-    Interface -->|Selection| Downloader[zenkai-core: Downloader]
-    Downloader -->|Video/Audio Streams| TempFiles[Temp Storage]
-    TempFiles --> Processor[zenkai-core: Processor]
-    Processor -->|Uses| FFmpeg[FFmpeg Binary]
-    FFmpeg -->|Muxed File| FinalOutput[Final Output]
+graph LR
+    Browser[User Browser] <-->|HTTP/WS| Server[FastAPI Server]
+    Server -->|Imports| Core[zenkai-core]
+    Core -->|Uses| YTDLP[yt-dlp]
+    Core -->|Uses| FFmpeg[FFmpeg]
+    Core -->|Writes| Storage[Filesystem]
+    
+    subgraph "zenkai-core"
+        Extractor
+        Downloader
+        Muxer
+    end
 ```

@@ -1,0 +1,22 @@
+# Core
+yt-dlp
+ffmpeg-python
+pydantic
+
+# Web / API
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
+jinja2
+
+# Utilities
+tqdm
+uvloop; sys_platform != 'win32'
+
+# Dev / Test
+pytest
+httpx
+black
+isort
+flake8
